@@ -76,8 +76,8 @@
         #btn-black { background-color: #222222; }
         /* 光る線のボタンデザイン */
         #btn-neon { 
-            background: linear-gradient(135deg, #00f2fe, #4facfe); 
-            box-shadow: 0 0 8px #00f2fe;
+            background: radial-gradient(circle, #ffffff 20%, #00f2fe 60%, #004466 100%);
+            box-shadow: 0 0 10px #00f2fe;
         }
         #clear-btn {
             background: #ff3b30;
@@ -128,20 +128,47 @@
         let camera, scene, renderer;
         let controller;
         let isDrawing = false;
-        let currentColor = 0xffffff; // 初期色：白
-        let isNeon = false;          // 光る線モードかどうか
+        let currentColor = 0xffffff;
+        let isNeon = false;
         let currentLineWidth = 0.015;
         let currentRibbonMesh = null;
         let ribbonPoints = [];
         const linesGroup = new THREE.Group();
         let cursorMesh;
+        let neonTexture;
 
         init();
         animate();
 
+        // 中心が白く輝き、周りがふわっと水色にぼやける発光テクスチャを生成
+        function createNeonGlowTexture() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 128;
+            canvas.height = 1;
+            const ctx = canvas.getContext('2d');
+
+            const gradient = ctx.createLinearGradient(0, 0, 128, 0);
+            gradient.addColorStop(0.0, 'rgba(0, 242, 254, 0.0)');   // 外側（完全透明）
+            gradient.addColorStop(0.25, 'rgba(0, 242, 254, 0.35)'); // ぼやけた光のオーラ
+            gradient.addColorStop(0.42, 'rgba(120, 250, 255, 0.9)'); // 強い水色の光
+            gradient.addColorStop(0.5, 'rgba(255, 255, 255, 1.0)');  // 中心の白い芯
+            gradient.addColorStop(0.58, 'rgba(120, 250, 255, 0.9)'); // 強い水色の光
+            gradient.addColorStop(0.75, 'rgba(0, 242, 254, 0.35)'); // ぼやけた光のオーラ
+            gradient.addColorStop(1.0, 'rgba(0, 242, 254, 0.0)');   // 外側（完全透明）
+
+            ctx.fillStyle = gradient;
+            ctx.fillRect(0, 0, 128, 1);
+
+            const texture = new THREE.CanvasTexture(canvas);
+            texture.needsUpdate = true;
+            return texture;
+        }
+
         function init() {
             scene = new THREE.Scene();
             scene.add(linesGroup);
+
+            neonTexture = createNeonGlowTexture();
 
             camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 20);
 
@@ -206,7 +233,7 @@
                 finishCurrentLine();
             });
 
-            // 色：光る線 (ネオンブルー)
+            // 色：光る線
             document.getElementById('btn-neon').addEventListener('click', (e) => {
                 e.stopPropagation();
                 currentColor = 0x00f2fe;
@@ -315,8 +342,10 @@
                 currentRibbonMesh.geometry.dispose();
             }
 
-            const width = currentLineWidth;
+            // 光る線のときは周囲のぼやけ（オーラ）分を含めて幅を広めにとる
+            const width = isNeon ? currentLineWidth * 2.8 : currentLineWidth;
             const positions = [];
+            const uvs = [];
             const indices = [];
 
             for (let i = 0; i < ribbonPoints.length; i++) {
@@ -338,6 +367,11 @@
                 positions.push(left.x, left.y, left.z);
                 positions.push(right.x, right.y, right.z);
 
+                // 横幅の左端(0)から右端(1)へグラデーションテクスチャを貼るためのUV座標
+                const v = i / (ribbonPoints.length - 1);
+                uvs.push(0, v);
+                uvs.push(1, v);
+
                 if (i < ribbonPoints.length - 1) {
                     const base = i * 2;
                     indices.push(base, base + 1, base + 2);
@@ -347,18 +381,19 @@
 
             const geometry = new THREE.BufferGeometry();
             geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+            geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
             geometry.setIndex(indices);
             geometry.computeVertexNormals();
 
-            // 光る線モードの場合は MeshStandardMaterial で発光（emissive）を設定
             let material;
             if (isNeon) {
-                material = new THREE.MeshStandardMaterial({
-                    color: currentColor,
-                    emissive: currentColor,
-                    emissiveIntensity: 1.5, // 強く光らせる
-                    side: THREE.DoubleSide,
-                    roughness: 0.2
+                // 加算合成（AdditiveBlending）で背景と光が混ざり、本物の光のように輝く
+                material = new THREE.MeshBasicMaterial({
+                    map: neonTexture,
+                    transparent: true,
+                    blending: THREE.AdditiveBlending,
+                    depthWrite: false,
+                    side: THREE.DoubleSide
                 });
             } else {
                 material = new THREE.MeshBasicMaterial({
@@ -391,7 +426,7 @@
                 cursorMesh.scale.set(currentLineWidth * 100, currentLineWidth * 100, 1);
 
                 if (isDrawing) {
-                    cursorMesh.material.color.setHex(isNeon ? 0x00f2fe : (currentColor === 0xffffff ? 0x00f2fe : 0xff3b30));
+                    cursorMesh.material.color.setHex(isNeon ? 0xffffff : (currentColor === 0xffffff ? 0x00f2fe : 0xff3b30));
                     updateFlatSquareLine();
                 } else {
                     cursorMesh.material.color.setHex(0x00f2fe);
