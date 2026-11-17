@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>Hand Pointing Spatial AR Drawing</title>
+    <title>Spatial AR Drawing (Touch Mode)</title>
     <style>
         body {
             margin: 0;
@@ -68,8 +68,6 @@
             cursor: pointer;
             margin-left: 10px;
         }
-        /* 手検出用の隠し要素 */
-        #hand-video { display: none; }
     </style>
 </head>
 <body>
@@ -83,35 +81,22 @@
         </div>
     </div>
 
-    <video id="hand-video" autoplay playsinline muted></video>
-
-    <!-- MediaPipe Hands（手の関節認識AI） -->
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
-
     <script type="module">
         import * as THREE from 'https://unpkg.com/three@0.150.0/build/three.module.js';
         import { ARButton } from 'https://unpkg.com/three@0.150.0/examples/jsm/webxr/ARButton.js';
 
         let camera, scene, renderer;
-        let isPointing = false;
+        let controller;
+        let isDrawing = false;
         let currentColor = 0xffffff; // 初期色：白
         let currentRibbonMesh = null;
         let ribbonPoints = [];
         const linesGroup = new THREE.Group();
 
-        // 指先の空間カーソル
+        // ペン先の目印（少し前方の平面マーカー）
         let cursorMesh;
-        // 最新の指差し3D空間座標
-        let latestFingerWorldPos = null;
-        let handDetected = false;
-
-        // MediaPipe用
-        let hands;
-        const handVideo = document.getElementById('hand-video');
-        let isProcessingHand = false;
 
         init();
-        setupHandTracking();
         animate();
 
         function init() {
@@ -138,7 +123,7 @@
             });
             document.body.appendChild(arButton);
 
-            // 指先の目印（四角い平面マーカー）
+            // ペン先の目印（四角い平面マーカー）
             const cursorGeo = new THREE.PlaneGeometry(0.015, 0.015);
             const cursorMat = new THREE.MeshBasicMaterial({
                 color: 0x00f2fe,
@@ -150,227 +135,17 @@
             cursorMesh.visible = false;
             scene.add(cursorMesh);
 
+            // WebXRのタッチコントローラー設定
+            controller = renderer.xr.getController(0);
+            controller.addEventListener('selectstart', onSelectStart);
+            controller.addEventListener('selectend', onSelectEnd);
+            scene.add(controller);
+
             // ARセッション開始・終了時
-            renderer.xr.addEventListener('sessionstart', async () => {
-                document.getElementById('status').innerText = 'カメラに「指差し」を映すと描けます';
+            renderer.xr.addEventListener('sessionstart', () => {
+                document.getElementById('status').innerText = '画面を長押ししながらスマホを動かそう！';
                 document.getElementById('controls').style.display = 'flex';
-                await startHandCamera();
             });
 
             renderer.xr.addEventListener('sessionend', () => {
-                document.getElementById('status').innerText = '下の「START AR」を押して開始';
-                document.getElementById('controls').style.display = 'none';
-            });
-
-            // 色切り替えボタン（白）
-            document.getElementById('btn-white').addEventListener('click', (e) => {
-                e.stopPropagation();
-                currentColor = 0xffffff;
-                document.getElementById('btn-white').classList.add('active');
-                document.getElementById('btn-black').classList.remove('active');
-                finishCurrentLine(); // 色を変えたら前の線は確定させる
-            });
-
-            // 色切り替えボタン（黒）
-            document.getElementById('btn-black').addEventListener('click', (e) => {
-                e.stopPropagation();
-                currentColor = 0x111111;
-                document.getElementById('btn-black').classList.add('active');
-                document.getElementById('btn-white').classList.remove('active');
-                finishCurrentLine();
-            });
-
-            // 消去ボタン
-            document.getElementById('clear-btn').addEventListener('click', (e) => {
-                e.stopPropagation();
-                finishCurrentLine();
-                while (linesGroup.children.length > 0) {
-                    const obj = linesGroup.children[0];
-                    linesGroup.remove(obj);
-                    if (obj.geometry) obj.geometry.dispose();
-                    if (obj.material) obj.material.dispose();
-                }
-            });
-
-            window.addEventListener('resize', onWindowResize);
-        }
-
-        // MediaPipe Handsの初期化
-        function setupHandTracking() {
-            hands = new Hands({
-                locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
-            });
-            hands.setOptions({
-                maxNumHands: 1,
-                modelComplexity: 0, // スマホで高速動作させるため軽量モデルを使用
-                minDetectionConfidence: 0.6,
-                minTrackingConfidence: 0.6
-            });
-            hands.onResults(onHandResults);
-        }
-
-        // 手認識用のビデオストリーム開始
-        async function startHandCamera() {
-            try {
-                const stream = await navigator.mediaDevices.getUserMedia({
-                    video: { facingMode: 'environment', width: 640, height: 480 }
-                });
-                handVideo.srcObject = stream;
-                await handVideo.play();
-            } catch (e) {
-                console.warn('補助カメラの取得に失敗:', e);
-            }
-        }
-
-        // 手の関節データを受け取ったときの処理
-        function onHandResults(results) {
-            isProcessingHand = false;
-
-            if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) {
-                handDetected = false;
-                isPointing = false;
-                return;
-            }
-
-            handDetected = true;
-            const landmarks = results.multiHandLandmarks[0];
-
-            // 指差しポーズ判定（人差し指が伸びていて、中指・薬指・小指が曲がっているか）
-            // Y座標は上が0、下が1なので、先端(Tip)が関節(PIP)より上(小さい)なら伸びている
-            const indexExtended = landmarks[8].y < landmarks[6].y;
-            const middleFolded = landmarks[12].y > landmarks[10].y;
-            const ringFolded = landmarks[16].y > landmarks[14].y;
-            const pinkyFolded = landmarks[20].y > landmarks[18].y;
-
-            isPointing = indexExtended && middleFolded && ringFolded && pinkyFolded;
-
-            // 人差し指の先端（ランドマーク8番）の2D画面座標（0〜1）を3D空間に変換
-            const tip = landmarks[8];
-            const ndcX = (tip.x * 2) - 1;
-            const ndcY = -(tip.y * 2) + 1;
-
-            // 手の大きさ（手首0番〜中指付け根9番の距離）からカメラとの距離（奥行き）を推定
-            const handSize = Math.hypot(landmarks[0].x - landmarks[9].x, landmarks[0].y - landmarks[9].y);
-            // おおよそ20cm〜60cmの範囲にマッピング
-            const estimatedDepth = THREE.MathUtils.clamp(0.12 / (handSize || 0.2), 0.2, 0.7);
-
-            // カメラのローカル座標からワールド空間座標を計算
-            const vector = new THREE.Vector3(ndcX, ndcY, -1).unproject(camera);
-            const dir = vector.sub(camera.position).normalize();
-            latestFingerWorldPos = camera.position.clone().add(dir.multiplyScalar(estimatedDepth));
-        }
-
-        function finishCurrentLine() {
-            currentRibbonMesh = null;
-            ribbonPoints = [];
-        }
-
-        // 平面（リボン状）の四角い線を生成・更新する関数
-        function updateFlatSquareLine(newPoint) {
-            if (ribbonPoints.length > 0) {
-                const lastPoint = ribbonPoints[ribbonPoints.length - 1];
-                // 5mm以上動いたら頂点を追加
-                if (newPoint.distanceTo(lastPoint) < 0.005) return;
-            }
-
-            ribbonPoints.push(newPoint.clone());
-            if (ribbonPoints.length < 2) return;
-
-            if (currentRibbonMesh) {
-                linesGroup.remove(currentRibbonMesh);
-                currentRibbonMesh.geometry.dispose();
-            }
-
-            // 平面の四角形（リボン）を作るための頂点配列を計算
-            const width = 0.015; // 線の幅（1.5cm）
-            const positions = [];
-            const indices = [];
-
-            for (let i = 0; i < ribbonPoints.length; i++) {
-                const p = ribbonPoints[i];
-                // 進行方向ベクトル
-                const tangent = new THREE.Vector3();
-                if (i < ribbonPoints.length - 1) {
-                    tangent.subVectors(ribbonPoints[i + 1], p).normalize();
-                } else {
-                    tangent.subVectors(p, ribbonPoints[i - 1]).normalize();
-                }
-
-                // カメラに向かう方向と進行方向の外積で「横幅の方向」を出す（平面の帯になる）
-                const toCamera = new THREE.Vector3().subVectors(camera.position, p).normalize();
-                const side = new THREE.Vector3().crossVectors(tangent, toCamera).normalize();
-                if (side.lengthSq() === 0) side.set(1, 0, 0);
-
-                const left = p.clone().addScaledVector(side, -width / 2);
-                const right = p.clone().addScaledVector(side, width / 2);
-
-                positions.push(left.x, left.y, left.z);
-                positions.push(right.x, right.y, right.z);
-
-                if (i < ribbonPoints.length - 1) {
-                    const base = i * 2;
-                    indices.push(base, base + 1, base + 2);
-                    indices.push(base + 1, base + 3, base + 2);
-                }
-            }
-
-            const geometry = new THREE.BufferGeometry();
-            geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-            geometry.setIndex(indices);
-            geometry.computeVertexNormals();
-
-            const material = new THREE.MeshBasicMaterial({
-                color: currentColor,
-                side: THREE.DoubleSide // 裏表どちらから見ても見える平面にする
-            });
-
-            currentRibbonMesh = new THREE.Mesh(geometry, material);
-            linesGroup.add(currentRibbonMesh);
-        }
-
-        function onWindowResize() {
-            camera.aspect = window.innerWidth / window.innerHeight;
-            camera.updateProjectionMatrix();
-            renderer.setSize(window.innerWidth, window.innerHeight);
-        }
-
-        function animate() {
-            renderer.setAnimationLoop(render);
-        }
-
-        function render() {
-            if (renderer.xr.isPresenting) {
-                // カメラ映像フレームをMediaPipeに送って手を検出
-                if (handVideo.readyState >= 2 && !isProcessingHand) {
-                    isProcessingHand = true;
-                    hands.send({ image: handVideo }).catch(() => { isProcessingHand = false; });
-                }
-
-                const statusEl = document.getElementById('status');
-
-                if (handDetected && latestFingerWorldPos) {
-                    cursorMesh.visible = true;
-                    cursorMesh.position.copy(latestFingerWorldPos);
-                    cursorMesh.lookAt(camera.position);
-
-                    if (isPointing) {
-                        statusEl.innerText = '✍️ 描画中（指差しポーズ）';
-                        cursorMesh.material.color.setHex(currentColor === 0xffffff ? 0x00f2fe : 0xff3b30);
-                        updateFlatSquareLine(latestFingerWorldPos);
-                    } else {
-                        statusEl.innerText = '✋ 手を認識中（人差し指だけ立てると描けます）';
-                        cursorMesh.material.color.setHex(0xaaaaaa);
-                        finishCurrentLine();
-                    }
-                } else {
-                    statusEl.innerText = 'カメラに「指差し」を映すと描けます';
-                    cursorMesh.visible = false;
-                    finishCurrentLine();
-                }
-            }
-
-            renderer.render(scene, camera);
-        }
-    </script>
-</body>
-</html>
+                document.getElementById('status').innerText
