@@ -33,11 +33,11 @@
             border-radius: 20px;
             font-size: 14px;
             text-align: center;
-            display: none; /* AR開始前は非表示 */
+            display: none;
         }
         #controls {
             pointer-events: auto;
-            display: none; /* AR開始前は非表示（ここが原因でした） */
+            display: none;
             flex-wrap: wrap;
             gap: 10px;
             align-items: center;
@@ -74,12 +74,16 @@
         }
         #btn-white { background-color: #ffffff; }
         #btn-black { background-color: #222222; }
+        /* 光る線のボタンデザイン */
+        #btn-neon { 
+            background: linear-gradient(135deg, #00f2fe, #4facfe); 
+            box-shadow: 0 0 8px #00f2fe;
+        }
         #clear-btn {
             background: #ff3b30;
             border: none;
             color: white;
         }
-        /* Three.js標準のARボタンデザイン */
         #ARButton {
             background: #ffffff !important;
             color: #000000 !important;
@@ -98,9 +102,10 @@
     <div id="overlay">
         <div id="instruction">画面を長押ししながらスマホを動かす</div>
         <div id="controls">
-            <!-- 色選択 -->
+            <!-- 色選択（白、黒、光る線） -->
             <button id="btn-white" class="color-btn active" aria-label="白"></button>
             <button id="btn-black" class="color-btn" aria-label="黒"></button>
+            <button id="btn-neon" class="color-btn" aria-label="光る線"></button>
             
             <div style="width: 1px; height: 24px; background: #555; margin: 0 4px;"></div>
 
@@ -123,7 +128,8 @@
         let camera, scene, renderer;
         let controller;
         let isDrawing = false;
-        let currentColor = 0xffffff;
+        let currentColor = 0xffffff; // 初期色：白
+        let isNeon = false;          // 光る線モードかどうか
         let currentLineWidth = 0.015;
         let currentRibbonMesh = null;
         let ribbonPoints = [];
@@ -156,13 +162,11 @@
             });
             document.body.appendChild(arButton);
 
-            // ARセッションが始まったときのイベント
             renderer.xr.addEventListener('sessionstart', () => {
                 document.getElementById('instruction').style.display = 'block';
                 document.getElementById('controls').style.display = 'flex';
             });
 
-            // ARセッションが終わったときのイベント
             renderer.xr.addEventListener('sessionend', () => {
                 document.getElementById('instruction').style.display = 'none';
                 document.getElementById('controls').style.display = 'none';
@@ -184,22 +188,34 @@
             controller.addEventListener('selectend', onSelectEnd);
             scene.add(controller);
 
+            // 色：白
             document.getElementById('btn-white').addEventListener('click', (e) => {
                 e.stopPropagation();
                 currentColor = 0xffffff;
-                document.getElementById('btn-white').classList.add('active');
-                document.getElementById('btn-black').classList.remove('active');
+                isNeon = false;
+                setActiveColor('btn-white');
                 finishCurrentLine();
             });
 
+            // 色：黒
             document.getElementById('btn-black').addEventListener('click', (e) => {
                 e.stopPropagation();
                 currentColor = 0x222222;
-                document.getElementById('btn-black').classList.add('active');
-                document.getElementById('btn-white').classList.remove('active');
+                isNeon = false;
+                setActiveColor('btn-black');
                 finishCurrentLine();
             });
 
+            // 色：光る線 (ネオンブルー)
+            document.getElementById('btn-neon').addEventListener('click', (e) => {
+                e.stopPropagation();
+                currentColor = 0x00f2fe;
+                isNeon = true;
+                setActiveColor('btn-neon');
+                finishCurrentLine();
+            });
+
+            // 太さ：細
             document.getElementById('size-thin').addEventListener('click', (e) => {
                 e.stopPropagation();
                 currentLineWidth = 0.008;
@@ -207,6 +223,7 @@
                 finishCurrentLine();
             });
 
+            // 太さ：中
             document.getElementById('size-mid').addEventListener('click', (e) => {
                 e.stopPropagation();
                 currentLineWidth = 0.015;
@@ -214,6 +231,7 @@
                 finishCurrentLine();
             });
 
+            // 太さ：太
             document.getElementById('size-thick').addEventListener('click', (e) => {
                 e.stopPropagation();
                 currentLineWidth = 0.03;
@@ -221,6 +239,7 @@
                 finishCurrentLine();
             });
 
+            // 消去
             document.getElementById('clear-btn').addEventListener('click', (e) => {
                 e.stopPropagation();
                 finishCurrentLine();
@@ -233,6 +252,13 @@
             });
 
             window.addEventListener('resize', onWindowResize);
+        }
+
+        function setActiveColor(id) {
+            ['btn-white', 'btn-black', 'btn-neon'].forEach(btnId => {
+                document.getElementById(btnId).classList.remove('active');
+            });
+            document.getElementById(id).classList.add('active');
         }
 
         function setActiveSize(id) {
@@ -324,10 +350,22 @@
             geometry.setIndex(indices);
             geometry.computeVertexNormals();
 
-            const material = new THREE.MeshBasicMaterial({
-                color: currentColor,
-                side: THREE.DoubleSide
-            });
+            // 光る線モードの場合は MeshStandardMaterial で発光（emissive）を設定
+            let material;
+            if (isNeon) {
+                material = new THREE.MeshStandardMaterial({
+                    color: currentColor,
+                    emissive: currentColor,
+                    emissiveIntensity: 1.5, // 強く光らせる
+                    side: THREE.DoubleSide,
+                    roughness: 0.2
+                });
+            } else {
+                material = new THREE.MeshBasicMaterial({
+                    color: currentColor,
+                    side: THREE.DoubleSide
+                });
+            }
 
             currentRibbonMesh = new THREE.Mesh(geometry, material);
             linesGroup.add(currentRibbonMesh);
@@ -353,7 +391,7 @@
                 cursorMesh.scale.set(currentLineWidth * 100, currentLineWidth * 100, 1);
 
                 if (isDrawing) {
-                    cursorMesh.material.color.setHex(currentColor === 0xffffff ? 0x00f2fe : 0xff3b30);
+                    cursorMesh.material.color.setHex(isNeon ? 0x00f2fe : (currentColor === 0xffffff ? 0x00f2fe : 0xff3b30));
                     updateFlatSquareLine();
                 } else {
                     cursorMesh.material.color.setHex(0x00f2fe);
