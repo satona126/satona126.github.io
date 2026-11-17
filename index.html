@@ -3,60 +3,78 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>Spatial AR Drawing (Touch Mode)</title>
+    <title>AR Drawing</title>
     <style>
         body {
             margin: 0;
             overflow: hidden;
-            background-color: #000;
+            background-color: #111;
             font-family: sans-serif;
+            color: white;
         }
-        #overlay {
+        #ui-container {
             position: absolute;
             top: 0;
             left: 0;
             width: 100%;
             height: 100%;
-            pointer-events: none;
             display: flex;
             flex-direction: column;
             justify-content: space-between;
             align-items: center;
-            padding: 25px 0 80px 0;
+            padding: 40px 20px;
             box-sizing: border-box;
             z-index: 10;
+            pointer-events: none; /* UIの隙間をタッチできるようにする */
+        }
+        /* 自前の大きなSTART ARボタン */
+        #start-ar-btn {
+            pointer-events: auto;
+            background: #00f2fe;
+            color: #000;
+            border: none;
+            padding: 18px 36px;
+            border-radius: 40px;
+            font-size: 18px;
+            font-weight: bold;
+            box-shadow: 0 6px 20px rgba(0,242,254,0.4);
+            cursor: pointer;
+            margin: auto;
+            transition: transform 0.1s;
+        }
+        #start-ar-btn:active {
+            transform: scale(0.95);
         }
         #status {
             background: rgba(0, 0, 0, 0.7);
-            color: white;
             padding: 10px 20px;
             border-radius: 20px;
             font-size: 14px;
             text-align: center;
+            display: none;
         }
         #controls {
             pointer-events: auto;
             display: none; /* AR開始後に表示 */
             gap: 15px;
             align-items: center;
-            background: rgba(0, 0, 0, 0.6);
+            background: rgba(0, 0, 0, 0.7);
             padding: 10px 20px;
             border-radius: 30px;
         }
         .color-btn {
-            width: 36px;
-            height: 36px;
+            width: 40px;
+            height: 40px;
             border-radius: 50%;
             border: 3px solid #666;
             cursor: pointer;
-            transition: transform 0.1s, border-color 0.1s;
         }
         .color-btn.active {
             border-color: #00f2fe;
-            transform: scale(1.15);
+            transform: scale(1.1);
         }
         #btn-white { background-color: #ffffff; }
-        #btn-black { background-color: #111111; }
+        #btn-black { background-color: #222222; }
         #clear-btn {
             background: #ff3b30;
             color: white;
@@ -66,24 +84,26 @@
             font-size: 14px;
             font-weight: bold;
             cursor: pointer;
-            margin-left: 10px;
         }
     </style>
 </head>
 <body>
 
-    <div id="overlay">
-        <div id="status">下の「START AR」を押して開始</div>
+    <div id="ui-container">
+        <!-- 画面中央の大きな開始ボタン -->
+        <button id="start-ar-btn">START AR</button>
+        
+        <div id="status">画面を長押ししながらスマホを動かそう！</div>
+
         <div id="controls">
             <button id="btn-white" class="color-btn active" aria-label="白"></button>
             <button id="btn-black" class="color-btn" aria-label="黒"></button>
-            <button id="clear-btn">消去</button>
+            <button id="clear-btn">すべて消去</button>
         </div>
     </div>
 
     <script type="module">
         import * as THREE from 'https://unpkg.com/three@0.150.0/build/three.module.js';
-        import { ARButton } from 'https://unpkg.com/three@0.150.0/examples/jsm/webxr/ARButton.js';
 
         let camera, scene, renderer;
         let controller;
@@ -92,12 +112,9 @@
         let currentRibbonMesh = null;
         let ribbonPoints = [];
         const linesGroup = new THREE.Group();
-
-        // ペン先の目印（少し前方の平面マーカー）
-        let cursorMesh;
+        let currentSession = null;
 
         init();
-        animate();
 
         function init() {
             scene = new THREE.Scene();
@@ -115,37 +132,191 @@
             const light = new THREE.HemisphereLight(0xffffff, 0xbbbbff, 1.2);
             scene.add(light);
 
-            // AR開始ボタン
-            const overlay = document.getElementById('overlay');
-            const arButton = ARButton.createButton(renderer, {
-                optionalFeatures: ['dom-overlay'],
-                domOverlay: { root: overlay }
-            });
-            document.body.appendChild(arButton);
-
-            // ペン先の目印（四角い平面マーカー）
-            const cursorGeo = new THREE.PlaneGeometry(0.015, 0.015);
-            const cursorMat = new THREE.MeshBasicMaterial({
-                color: 0x00f2fe,
-                side: THREE.DoubleSide,
-                transparent: true,
-                opacity: 0.8
-            });
-            cursorMesh = new THREE.Mesh(cursorGeo, cursorMat);
-            cursorMesh.visible = false;
-            scene.add(cursorMesh);
-
             // WebXRのタッチコントローラー設定
             controller = renderer.xr.getController(0);
             controller.addEventListener('selectstart', onSelectStart);
             controller.addEventListener('selectend', onSelectEnd);
             scene.add(controller);
 
-            // ARセッション開始・終了時
-            renderer.xr.addEventListener('sessionstart', () => {
-                document.getElementById('status').innerText = '画面を長押ししながらスマホを動かそう！';
-                document.getElementById('controls').style.display = 'flex';
+            // 「START AR」ボタンを押したときの処理
+            const startBtn = document.getElementById('start-ar-btn');
+            startBtn.addEventListener('click', async () => {
+                if (navigator.xr) {
+                    try {
+                        const session = await navigator.xr.requestSession('immersive-ar', {
+                            requiredFeatures: ['local'],
+                            optionalFeatures: ['dom-overlay'],
+                            domOverlay: { root: document.getElementById('ui-container') }
+                        });
+                        
+                        onSessionStarted(session);
+                    } catch (e) {
+                        alert('ARセッションの開始に失敗しました: ' + e.message);
+                    }
+                } else {
+                    alert('お使いのブラウザはWebXR非対応です。AndroidのChromeなどでお試しください。');
+                }
             });
 
-            renderer.xr.addEventListener('sessionend', () => {
-                document.getElementById('status').innerText
+            // 色切り替え（白）
+            document.getElementById('btn-white').addEventListener('click', (e) => {
+                e.stopPropagation();
+                currentColor = 0xffffff;
+                document.getElementById('btn-white').classList.add('active');
+                document.getElementById('btn-black').classList.remove('active');
+                finishCurrentLine();
+            });
+
+            // 色切り替え（黒）
+            document.getElementById('btn-black').addEventListener('click', (e) => {
+                e.stopPropagation();
+                currentColor = 0x222222;
+                document.getElementById('btn-black').classList.add('active');
+                document.getElementById('btn-white').classList.remove('active');
+                finishCurrentLine();
+            });
+
+            // 消去ボタン
+            document.getElementById('clear-btn').addEventListener('click', (e) => {
+                e.stopPropagation();
+                finishCurrentLine();
+                while (linesGroup.children.length > 0) {
+                    const obj = linesGroup.children[0];
+                    linesGroup.remove(obj);
+                    if (obj.geometry) obj.geometry.dispose();
+                    if (obj.material) obj.material.dispose();
+                }
+            });
+
+            window.addEventListener('resize', onWindowResize);
+        }
+
+        async function onSessionStarted(session) {
+            currentSession = session;
+            await renderer.xr.setSession(session);
+
+            // UIの切り替え
+            document.getElementById('start-ar-btn').style.display = 'none';
+            document.getElementById('status').style.display = 'block';
+            document.getElementById('controls').style.display = 'flex';
+
+            session.addEventListener('end', () => {
+                currentSession = null;
+                document.getElementById('start-ar-btn').style.display = 'block';
+                document.getElementById('status').style.display = 'none';
+                document.getElementById('controls').style.display = 'none';
+            });
+
+            renderer.setAnimationLoop(render);
+        }
+
+        // カメラ前方（25cm先）の空間座標
+        function getPenTipPosition() {
+            const position = new THREE.Vector3();
+            const quaternion = new THREE.Quaternion();
+            const scale = new THREE.Vector3();
+
+            camera.matrixWorld.decompose(position, quaternion, scale);
+            const offset = new THREE.Vector3(0, 0, -0.25);
+            offset.applyQuaternion(quaternion);
+            position.add(offset);
+            return position;
+        }
+
+        function onSelectStart() {
+            isDrawing = true;
+            ribbonPoints = [];
+            const p = getPenTipPosition();
+            ribbonPoints.push(p);
+        }
+
+        function onSelectEnd() {
+            isDrawing = false;
+            currentRibbonMesh = null;
+            ribbonPoints = [];
+        }
+
+        function finishCurrentLine() {
+            currentRibbonMesh = null;
+            ribbonPoints = [];
+        }
+
+        // リボン型の四角い線を生成・更新
+        function updateFlatSquareLine() {
+            if (!isDrawing) return;
+
+            const newPoint = getPenTipPosition();
+            if (ribbonPoints.length > 0) {
+                const lastPoint = ribbonPoints[ribbonPoints.length - 1];
+                if (newPoint.distanceTo(lastPoint) < 0.005) return;
+            }
+
+            ribbonPoints.push(newPoint.clone());
+            if (ribbonPoints.length < 2) return;
+
+            if (currentRibbonMesh) {
+                linesGroup.remove(currentRibbonMesh);
+                currentRibbonMesh.geometry.dispose();
+            }
+
+            const width = 0.015; // 線の幅（1.5cm）
+            const positions = [];
+            const indices = [];
+
+            for (let i = 0; i < ribbonPoints.length; i++) {
+                const p = ribbonPoints[i];
+                const tangent = new THREE.Vector3();
+                if (i < ribbonPoints.length - 1) {
+                    tangent.subVectors(ribbonPoints[i + 1], p).normalize();
+                } else {
+                    tangent.subVectors(p, ribbonPoints[i - 1]).normalize();
+                }
+
+                const toCamera = new THREE.Vector3().subVectors(camera.position, p).normalize();
+                const side = new THREE.Vector3().crossVectors(tangent, toCamera).normalize();
+                if (side.lengthSq() === 0) side.set(1, 0, 0);
+
+                const left = p.clone().addScaledVector(side, -width / 2);
+                const right = p.clone().addScaledVector(side, width / 2);
+
+                positions.push(left.x, left.y, left.z);
+                positions.push(right.x, right.y, right.z);
+
+                if (i < ribbonPoints.length - 1) {
+                    const base = i * 2;
+                    indices.push(base, base + 1, base + 2);
+                    indices.push(base + 1, base + 3, base + 2);
+                }
+            }
+
+            const geometry = new THREE.BufferGeometry();
+            geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+            geometry.setIndex(indices);
+            geometry.computeVertexNormals();
+
+            const material = new THREE.MeshBasicMaterial({
+                color: currentColor,
+                side: THREE.DoubleSide // どの方から見ても見える平らな帯
+            });
+
+            currentRibbonMesh = new THREE.Mesh(geometry, material);
+            linesGroup.add(currentRibbonMesh);
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        function render(timestamp, frame) {
+            if (frame) {
+                if (isDrawing) {
+                    updateFlatSquareLine();
+                }
+            }
+            renderer.render(scene, camera);
+        }
+    </script>
+</body>
+</html>
