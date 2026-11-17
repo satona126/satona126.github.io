@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>Spatial AR Drawing</title>
+    <title>AR Drawing</title>
     <style>
         body {
             margin: 0;
@@ -33,10 +33,11 @@
             border-radius: 20px;
             font-size: 14px;
             text-align: center;
+            display: none; /* AR開始前は非表示 */
         }
         #controls {
             pointer-events: auto;
-            display: flex;
+            display: none; /* AR開始前は非表示（ここが原因でした） */
             flex-wrap: wrap;
             gap: 10px;
             align-items: center;
@@ -95,7 +96,7 @@
 <body>
 
     <div id="overlay">
-        <div id="instruction">画面を長押ししながらスマホを動かそう！</div>
+        <div id="instruction">画面を長押ししながらスマホを動かす</div>
         <div id="controls">
             <!-- 色選択 -->
             <button id="btn-white" class="color-btn active" aria-label="白"></button>
@@ -122,8 +123,8 @@
         let camera, scene, renderer;
         let controller;
         let isDrawing = false;
-        let currentColor = 0xffffff; // 初期色：白
-        let currentLineWidth = 0.015; // 初期太さ（中: 1.5cm）
+        let currentColor = 0xffffff;
+        let currentLineWidth = 0.015;
         let currentRibbonMesh = null;
         let ribbonPoints = [];
         const linesGroup = new THREE.Group();
@@ -147,7 +148,6 @@
             const light = new THREE.HemisphereLight(0xffffff, 0xbbbbff, 1.2);
             scene.add(light);
 
-            // 前に成功したシンプルな標準ARボタン
             const overlay = document.getElementById('overlay');
             const arButton = ARButton.createButton(renderer, {
                 requiredFeatures: ['local'],
@@ -156,7 +156,18 @@
             });
             document.body.appendChild(arButton);
 
-            // ペン先の目印
+            // ARセッションが始まったときのイベント
+            renderer.xr.addEventListener('sessionstart', () => {
+                document.getElementById('instruction').style.display = 'block';
+                document.getElementById('controls').style.display = 'flex';
+            });
+
+            // ARセッションが終わったときのイベント
+            renderer.xr.addEventListener('sessionend', () => {
+                document.getElementById('instruction').style.display = 'none';
+                document.getElementById('controls').style.display = 'none';
+            });
+
             const cursorGeo = new THREE.PlaneGeometry(0.015, 0.015);
             const cursorMat = new THREE.MeshBasicMaterial({
                 color: 0x00f2fe,
@@ -173,7 +184,6 @@
             controller.addEventListener('selectend', onSelectEnd);
             scene.add(controller);
 
-            // 色：白
             document.getElementById('btn-white').addEventListener('click', (e) => {
                 e.stopPropagation();
                 currentColor = 0xffffff;
@@ -182,7 +192,6 @@
                 finishCurrentLine();
             });
 
-            // 色：黒
             document.getElementById('btn-black').addEventListener('click', (e) => {
                 e.stopPropagation();
                 currentColor = 0x222222;
@@ -191,7 +200,6 @@
                 finishCurrentLine();
             });
 
-            // 太さ：細 (0.8cm)
             document.getElementById('size-thin').addEventListener('click', (e) => {
                 e.stopPropagation();
                 currentLineWidth = 0.008;
@@ -199,7 +207,6 @@
                 finishCurrentLine();
             });
 
-            // 太さ：中 (1.5cm)
             document.getElementById('size-mid').addEventListener('click', (e) => {
                 e.stopPropagation();
                 currentLineWidth = 0.015;
@@ -207,7 +214,6 @@
                 finishCurrentLine();
             });
 
-            // 太さ：太 (3.0cm)
             document.getElementById('size-thick').addEventListener('click', (e) => {
                 e.stopPropagation();
                 currentLineWidth = 0.03;
@@ -215,7 +221,6 @@
                 finishCurrentLine();
             });
 
-            // すべて消去
             document.getElementById('clear-btn').addEventListener('click', (e) => {
                 e.stopPropagation();
                 finishCurrentLine();
@@ -345,7 +350,6 @@
                 cursorMesh.position.copy(tipPos);
                 cursorMesh.lookAt(camera.position);
 
-                // カーソルの大きさを現在の線の太さに連動させる
                 cursorMesh.scale.set(currentLineWidth * 100, currentLineWidth * 100, 1);
 
                 if (isDrawing) {
