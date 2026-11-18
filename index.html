@@ -10,7 +10,7 @@
             overflow: hidden;
             background-color: #000;
             font-family: sans-serif;
-            touch-action: none; /* スマホの画面スクロール等を防いでタッチを確実にする */
+            touch-action: none;
         }
         #overlay {
             position: absolute;
@@ -196,6 +196,7 @@
                 document.getElementById('instruction').style.display = 'none';
                 document.getElementById('controls').style.display = 'none';
                 isDrawing = false;
+                finishCurrentLine();
             });
 
             const cursorGeo = new THREE.PlaneGeometry(0.015, 0.015);
@@ -209,7 +210,6 @@
             cursorMesh.visible = false;
             scene.add(cursorMesh);
 
-            // WebXR標準コントローラー + 画面直接タッチの両方で確実に検知させる
             controller = renderer.xr.getController(0);
             controller.addEventListener('selectstart', onStartDraw);
             controller.addEventListener('selectend', onEndDraw);
@@ -221,12 +221,11 @@
             overlay.addEventListener('pointerup', onEndDraw);
             overlay.addEventListener('pointercancel', onEndDraw);
 
-            // ボタン上のタッチが描画イベントに邪魔されないようにする
             const controls = document.getElementById('controls');
             controls.addEventListener('pointerdown', (e) => e.stopPropagation());
             controls.addEventListener('touchstart', (e) => e.stopPropagation());
 
-            // 色：白
+            // 色選択ボタン
             document.getElementById('btn-white').addEventListener('click', () => {
                 currentColor = 0xffffff;
                 isNeon = false;
@@ -234,7 +233,6 @@
                 finishCurrentLine();
             });
 
-            // 色：黒
             document.getElementById('btn-black').addEventListener('click', () => {
                 currentColor = 0x222222;
                 isNeon = false;
@@ -242,7 +240,6 @@
                 finishCurrentLine();
             });
 
-            // 色：光る線
             document.getElementById('btn-neon').addEventListener('click', () => {
                 currentColor = 0x00f2fe;
                 isNeon = true;
@@ -250,28 +247,26 @@
                 finishCurrentLine();
             });
 
-            // 太さ：細
+            // 太さ選択ボタン
             document.getElementById('size-thin').addEventListener('click', () => {
                 currentLineWidth = 0.008;
                 setActiveSize('size-thin');
                 finishCurrentLine();
             });
 
-            // 太さ：中
             document.getElementById('size-mid').addEventListener('click', () => {
                 currentLineWidth = 0.015;
                 setActiveSize('size-mid');
                 finishCurrentLine();
             });
 
-            // 太さ：太
             document.getElementById('size-thick').addEventListener('click', () => {
                 currentLineWidth = 0.03;
                 setActiveSize('size-thick');
                 finishCurrentLine();
             });
 
-            // 消去
+            // 消去ボタン
             document.getElementById('clear-btn').addEventListener('click', () => {
                 finishCurrentLine();
                 while (linesGroup.children.length > 0) {
@@ -326,6 +321,7 @@
         }
 
         function finishCurrentLine() {
+            isDrawing = false;
             currentRibbonMesh = null;
             ribbonPoints = [];
         }
@@ -334,9 +330,18 @@
             if (!isDrawing) return;
 
             const newPoint = getPenTipPosition();
+            
+            // もしカメラが急激に動きすぎて座標がおかしくなった場合は、描画を強制リセットしてクラッシュを防ぐ
+            const camPos = new THREE.Vector3();
+            camera.getWorldPosition(camPos);
+            if (newPoint.distanceTo(camPos) > 3.0 || isNaN(newPoint.x)) {
+                finishCurrentLine();
+                return;
+            }
+
             if (ribbonPoints.length > 0) {
                 const lastPoint = ribbonPoints[ribbonPoints.length - 1];
-                if (newPoint.distanceTo(lastPoint) < 0.004) return;
+                if (newPoint.distanceTo(lastPoint) < 0.003) return;
             }
 
             ribbonPoints.push(newPoint.clone());
@@ -351,9 +356,6 @@
             const positions = [];
             const uvs = [];
             const indices = [];
-
-            const camPos = new THREE.Vector3();
-            camera.getWorldPosition(camPos);
 
             for (let i = 0; i < ribbonPoints.length; i++) {
                 const p = ribbonPoints[i];
@@ -421,7 +423,7 @@
             renderer.setAnimationLoop(render);
         }
 
-        function render() {
+        function render(timestamp, frame) {
             if (renderer.xr.isPresenting) {
                 const tipPos = getPenTipPosition();
                 cursorMesh.visible = true;
