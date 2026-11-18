@@ -10,7 +10,6 @@
             overflow: hidden;
             background-color: #000;
             font-family: sans-serif;
-            touch-action: none;
         }
         #overlay {
             position: absolute;
@@ -34,11 +33,11 @@
             border-radius: 20px;
             font-size: 14px;
             text-align: center;
-            display: none;
+            display: none; /* AR開始前は非表示 */
         }
         #controls {
             pointer-events: auto;
-            display: none;
+            display: none; /* AR開始前は非表示 */
             flex-wrap: wrap;
             gap: 10px;
             align-items: center;
@@ -75,6 +74,7 @@
         }
         #btn-white { background-color: #ffffff; }
         #btn-black { background-color: #222222; }
+        /* 光る線ボタンのデザイン */
         #btn-neon { 
             background: radial-gradient(circle, #ffffff 20%, #00f2fe 60%, #004466 100%);
             box-shadow: 0 0 10px #00f2fe;
@@ -84,6 +84,7 @@
             border: none;
             color: white;
         }
+        /* Three.js標準のARボタンデザイン */
         #ARButton {
             background: #ffffff !important;
             color: #000000 !important;
@@ -129,7 +130,7 @@
         let controller;
         let isDrawing = false;
         let currentColor = 0xffffff;
-        let isNeon = false;
+        let isNeon = false; // 光る線モードか判定するフラグ
         let currentLineWidth = 0.015;
         let currentRibbonMesh = null;
         let ribbonPoints = [];
@@ -140,6 +141,7 @@
         init();
         animate();
 
+        // ぼやけて光るネオン用のグラデーションテクスチャを生成
         function createNeonGlowTexture() {
             const canvas = document.createElement('canvas');
             canvas.width = 128;
@@ -150,7 +152,7 @@
             gradient.addColorStop(0.0, 'rgba(0, 242, 254, 0.0)');
             gradient.addColorStop(0.25, 'rgba(0, 242, 254, 0.35)');
             gradient.addColorStop(0.42, 'rgba(120, 250, 255, 0.9)');
-            gradient.addColorStop(0.5, 'rgba(255, 255, 255, 1.0)');
+            gradient.addColorStop(0.5, 'rgba(255, 255, 255, 1.0)'); // 中央の白い芯
             gradient.addColorStop(0.58, 'rgba(120, 250, 255, 0.9)');
             gradient.addColorStop(0.75, 'rgba(0, 242, 254, 0.35)');
             gradient.addColorStop(1.0, 'rgba(0, 242, 254, 0.0)');
@@ -182,21 +184,22 @@
 
             const overlay = document.getElementById('overlay');
             const arButton = ARButton.createButton(renderer, {
+                requiredFeatures: ['local'],
                 optionalFeatures: ['dom-overlay'],
                 domOverlay: { root: overlay }
             });
             document.body.appendChild(arButton);
 
+            // ARセッションが始まったときのイベント
             renderer.xr.addEventListener('sessionstart', () => {
                 document.getElementById('instruction').style.display = 'block';
                 document.getElementById('controls').style.display = 'flex';
             });
 
+            // ARセッションが終わったときのイベント
             renderer.xr.addEventListener('sessionend', () => {
                 document.getElementById('instruction').style.display = 'none';
                 document.getElementById('controls').style.display = 'none';
-                isDrawing = false;
-                finishCurrentLine();
             });
 
             const cursorGeo = new THREE.PlaneGeometry(0.015, 0.015);
@@ -211,63 +214,64 @@
             scene.add(cursorMesh);
 
             controller = renderer.xr.getController(0);
-            controller.addEventListener('selectstart', onStartDraw);
-            controller.addEventListener('selectend', onEndDraw);
+            controller.addEventListener('selectstart', onSelectStart);
+            controller.addEventListener('selectend', onSelectEnd);
             scene.add(controller);
 
-            overlay.addEventListener('pointerdown', (e) => {
-                if (e.target === overlay) onStartDraw();
-            });
-            overlay.addEventListener('pointerup', onEndDraw);
-            overlay.addEventListener('pointercancel', onEndDraw);
-
-            const controls = document.getElementById('controls');
-            controls.addEventListener('pointerdown', (e) => e.stopPropagation());
-            controls.addEventListener('touchstart', (e) => e.stopPropagation());
-
-            // 色選択ボタン
-            document.getElementById('btn-white').addEventListener('click', () => {
+            // 色：白
+            document.getElementById('btn-white').addEventListener('click', (e) => {
+                e.stopPropagation();
                 currentColor = 0xffffff;
                 isNeon = false;
                 setActiveColor('btn-white');
                 finishCurrentLine();
             });
 
-            document.getElementById('btn-black').addEventListener('click', () => {
+            // 色：黒
+            document.getElementById('btn-black').addEventListener('click', (e) => {
+                e.stopPropagation();
                 currentColor = 0x222222;
                 isNeon = false;
                 setActiveColor('btn-black');
                 finishCurrentLine();
             });
 
-            document.getElementById('btn-neon').addEventListener('click', () => {
+            // 色：光る線
+            document.getElementById('btn-neon').addEventListener('click', (e) => {
+                e.stopPropagation();
                 currentColor = 0x00f2fe;
                 isNeon = true;
                 setActiveColor('btn-neon');
                 finishCurrentLine();
             });
 
-            // 太さ選択ボタン
-            document.getElementById('size-thin').addEventListener('click', () => {
+            // 太さ：細
+            document.getElementById('size-thin').addEventListener('click', (e) => {
+                e.stopPropagation();
                 currentLineWidth = 0.008;
                 setActiveSize('size-thin');
                 finishCurrentLine();
             });
 
-            document.getElementById('size-mid').addEventListener('click', () => {
+            // 太さ：中
+            document.getElementById('size-mid').addEventListener('click', (e) => {
+                e.stopPropagation();
                 currentLineWidth = 0.015;
                 setActiveSize('size-mid');
                 finishCurrentLine();
             });
 
-            document.getElementById('size-thick').addEventListener('click', () => {
+            // 太さ：太
+            document.getElementById('size-thick').addEventListener('click', (e) => {
+                e.stopPropagation();
                 currentLineWidth = 0.03;
                 setActiveSize('size-thick');
                 finishCurrentLine();
             });
 
-            // 消去ボタン
-            document.getElementById('clear-btn').addEventListener('click', () => {
+            // 消去
+            document.getElementById('clear-btn').addEventListener('click', (e) => {
+                e.stopPropagation();
                 finishCurrentLine();
                 while (linesGroup.children.length > 0) {
                     const obj = linesGroup.children[0];
@@ -306,22 +310,20 @@
             return position;
         }
 
-        function onStartDraw() {
-            if (!renderer.xr.isPresenting) return;
+        function onSelectStart() {
             isDrawing = true;
             ribbonPoints = [];
             const p = getPenTipPosition();
             ribbonPoints.push(p);
         }
 
-        function onEndDraw() {
+        function onSelectEnd() {
             isDrawing = false;
             currentRibbonMesh = null;
             ribbonPoints = [];
         }
 
         function finishCurrentLine() {
-            isDrawing = false;
             currentRibbonMesh = null;
             ribbonPoints = [];
         }
@@ -330,18 +332,9 @@
             if (!isDrawing) return;
 
             const newPoint = getPenTipPosition();
-            
-            // もしカメラが急激に動きすぎて座標がおかしくなった場合は、描画を強制リセットしてクラッシュを防ぐ
-            const camPos = new THREE.Vector3();
-            camera.getWorldPosition(camPos);
-            if (newPoint.distanceTo(camPos) > 3.0 || isNaN(newPoint.x)) {
-                finishCurrentLine();
-                return;
-            }
-
             if (ribbonPoints.length > 0) {
                 const lastPoint = ribbonPoints[ribbonPoints.length - 1];
-                if (newPoint.distanceTo(lastPoint) < 0.003) return;
+                if (newPoint.distanceTo(lastPoint) < 0.005) return;
             }
 
             ribbonPoints.push(newPoint.clone());
@@ -352,6 +345,7 @@
                 currentRibbonMesh.geometry.dispose();
             }
 
+            // 光る線のときは、ぼやけるオーラ分を含めて少し幅を広げる
             const width = isNeon ? currentLineWidth * 2.8 : currentLineWidth;
             const positions = [];
             const uvs = [];
@@ -366,7 +360,7 @@
                     tangent.subVectors(p, ribbonPoints[i - 1]).normalize();
                 }
 
-                const toCamera = new THREE.Vector3().subVectors(camPos, p).normalize();
+                const toCamera = new THREE.Vector3().subVectors(camera.position, p).normalize();
                 const side = new THREE.Vector3().crossVectors(tangent, toCamera).normalize();
                 if (side.lengthSq() === 0) side.set(1, 0, 0);
 
@@ -376,6 +370,7 @@
                 positions.push(left.x, left.y, left.z);
                 positions.push(right.x, right.y, right.z);
 
+                // テクスチャを綺麗に貼るためのUV座標
                 const v = i / (ribbonPoints.length - 1);
                 uvs.push(0, v);
                 uvs.push(1, v);
@@ -395,6 +390,7 @@
 
             let material;
             if (isNeon) {
+                // 光る線のマテリアル（加算合成＋グラデーションテクスチャ）
                 material = new THREE.MeshBasicMaterial({
                     map: neonTexture,
                     transparent: true,
@@ -403,6 +399,7 @@
                     side: THREE.DoubleSide
                 });
             } else {
+                // 通常の白・黒マテリアル
                 material = new THREE.MeshBasicMaterial({
                     color: currentColor,
                     side: THREE.DoubleSide
@@ -423,15 +420,12 @@
             renderer.setAnimationLoop(render);
         }
 
-        function render(timestamp, frame) {
+        function render() {
             if (renderer.xr.isPresenting) {
                 const tipPos = getPenTipPosition();
                 cursorMesh.visible = true;
                 cursorMesh.position.copy(tipPos);
-
-                const camPos = new THREE.Vector3();
-                camera.getWorldPosition(camPos);
-                cursorMesh.lookAt(camPos);
+                cursorMesh.lookAt(camera.position);
 
                 cursorMesh.scale.set(currentLineWidth * 100, currentLineWidth * 100, 1);
 
